@@ -1,0 +1,555 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2F5D3A">
+<title>Easement Monitor</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<!-- Optional: writes GPS/heading into photo EXIF. App works without it. -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/piexifjs/1.0.6/piexif.min.js" defer></script>
+<style>
+:root{
+  --paper:#F2F4F0; --ink:#17251B; --ink-soft:#4F5F55; --line:#C9D1CB;
+  --spruce:#2F5D3A; --spruce-deep:#1E3F27; --flag:#E0621B; --flag-deep:#B54B0F;
+  --marker:#F2C94C; --white:#FFFFFF;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+html,body{height:100%}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:17px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-text-size-adjust:100%}
+h1,h2,h3{margin:0;font-weight:700;line-height:1.15}
+h1{font-size:28px} h2{font-size:22px} h3{font-size:18px}
+p{margin:0 0 12px}
+.small{font-size:14px;color:var(--ink-soft)}
+.screen{display:none;min-height:100%;flex-direction:column}
+.screen.active{display:flex}
+header{padding:18px 20px 10px}
+main{flex:1;padding:0 20px 24px}
+label{display:block;font-weight:600;margin:14px 0 6px}
+input[type=text],input[type=date],textarea,select{
+  width:100%;font:inherit;padding:12px;border:2px solid var(--line);border-radius:8px;background:var(--white);color:var(--ink)}
+input:focus,textarea:focus,button:focus-visible{outline:3px solid var(--marker);outline-offset:2px}
+button{font:inherit;font-weight:700;border:0;border-radius:10px;cursor:pointer;color:var(--white);
+  background:var(--spruce);padding:16px 18px;width:100%;min-height:56px;font-size:18px}
+button:active{background:var(--spruce-deep)}
+button.secondary{background:var(--white);color:var(--ink);border:2px solid var(--ink)}
+button.secondary:active{background:#E6EAE6}
+button.quiet{background:none;color:var(--spruce);text-decoration:underline;min-height:0;padding:8px;width:auto;font-weight:600}
+button.danger{background:var(--white);color:#9B1C1C;border:2px solid #9B1C1C}
+button:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:10px}
+.row>*{flex:1}
+.stack>*+*{margin-top:12px}
+
+/* status bar */
+.status{background:var(--spruce);color:var(--white);padding:12px 20px;display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;position:sticky;top:env(safe-area-inset-top,0px);z-index:2}
+.status b{display:block;font-size:22px;line-height:1.1}
+.status span{font-size:12px;opacity:.85}
+.status .gps{grid-column:1/4;font-size:13px;opacity:.95;display:flex;justify-content:space-between}
+.status.rec{background:var(--flag)}
+.status.rec::after{content:"";position:absolute;left:0;right:0;bottom:0;height:5px;
+  background:repeating-linear-gradient(90deg,var(--flag-deep) 0 18px,var(--marker) 18px 36px)}
+.status{position:sticky;overflow:hidden}
+
+/* visit list */
+.visit{display:block;width:100%;text-align:left;background:var(--white);color:var(--ink);border:2px solid var(--line);
+  padding:14px;border-radius:10px;font-weight:600}
+.visit .meta{display:block;font-weight:400;font-size:14px;color:var(--ink-soft);margin-top:2px}
+.visit.open{border-color:var(--flag);border-width:3px}
+
+/* capture screen */
+.big-actions{position:sticky;bottom:0;background:var(--paper);padding:12px 0 8px;border-top:2px solid var(--line)}
+.big-actions button{min-height:68px;font-size:20px}
+#btnAudio.on{background:var(--flag)}
+.log{list-style:none;margin:0;padding:0}
+.log li{display:flex;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:flex-start}
+.log .tag{flex:0 0 auto;min-width:54px;font-weight:700;color:var(--spruce)}
+.log .tag.a{color:var(--flag)}
+.log img{width:64px;height:64px;object-fit:cover;border-radius:6px;flex:0 0 auto;background:#ddd}
+.log .body{flex:1;font-size:15px}
+.log .body .small{display:block}
+.log input[type=text]{margin-top:6px;padding:8px;font-size:15px}
+.notice{background:#FFF6D6;border-left:6px solid var(--marker);padding:12px 14px;border-radius:6px;font-size:15px}
+.notice.warn{background:#FDE7DA;border-left-color:var(--flag)}
+.toast{position:fixed;left:50%;bottom:calc(24px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);
+  background:var(--ink);color:var(--white);padding:12px 18px;border-radius:10px;font-size:15px;max-width:90%;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
+.toast.show{opacity:1}
+dl.summary{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0 0 16px}
+dl.summary dt{color:var(--ink-soft)} dl.summary dd{margin:0;font-weight:600}
+.progress{height:10px;background:var(--line);border-radius:5px;overflow:hidden;margin:10px 0}
+.progress i{display:block;height:100%;background:var(--spruce);width:0;transition:width .2s}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+
+<!-- ============ HOME: visit list ============ -->
+<section id="scrHome" class="screen active">
+  <header>
+    <h1>Easement Monitor</h1>
+    <p class="small">Strafford County Conservation District · field capture</p>
+  </header>
+  <main class="stack">
+    <div id="storageNotice" class="notice" hidden></div>
+    <button id="btnNew">Start a new visit</button>
+    <h2 style="margin-top:8px">Visits on this phone</h2>
+    <div id="visitList" class="stack"><p class="small">No visits yet.</p></div>
+    <p class="small" style="margin-top:20px">Photos and recordings stay on this phone until you export and delete them. Export after every visit.</p>
+  </main>
+</section>
+
+<!-- ============ NEW VISIT form ============ -->
+<section id="scrNew" class="screen">
+  <header><h1>New visit</h1></header>
+  <main>
+    <div class="notice">Before you start: open <b>GPSLogger</b> and press its start button so the track keeps recording while your screen is off. This app records a backup track while it is open.</div>
+    <label for="fEasement">Easement name</label>
+    <input type="text" id="fEasement" autocomplete="off" placeholder="e.g. Smith Farm">
+    <label for="fLandowner">Landowner</label>
+    <input type="text" id="fLandowner" autocomplete="off">
+    <label for="fDate">Date</label>
+    <input type="date" id="fDate">
+    <label for="fMonitors">Monitor name(s)</label>
+    <input type="text" id="fMonitors" autocomplete="off" placeholder="separate names with commas">
+    <label for="fWeather">Weather</label>
+    <input type="text" id="fWeather" autocomplete="off" placeholder="e.g. 62°F, overcast, light wind">
+    <label for="fNotes">Notes before starting (optional)</label>
+    <textarea id="fNotes" rows="2" placeholder="e.g. entering from Route 155 pull-off"></textarea>
+    <div class="stack" style="margin-top:20px">
+      <button id="btnStartVisit">Start visit and begin tracking</button>
+      <button class="secondary" data-go="scrHome">Cancel</button>
+    </div>
+  </main>
+</section>
+
+<!-- ============ CAPTURE (active visit) ============ -->
+<section id="scrVisit" class="screen">
+  <div class="status" id="statusBar">
+    <div><b id="stTime">0:00</b><span>elapsed</span></div>
+    <div><b id="stDist">0.00</b><span>miles walked</span></div>
+    <div><b id="stPts">0</b><span>track points</span></div>
+    <div class="gps"><span id="stGps">Waiting for GPS…</span><span id="stHead">—</span></div>
+  </div>
+  <main>
+    <h2 id="vTitle" style="margin:14px 0 2px"></h2>
+    <p class="small" id="vSub"></p>
+    <div id="permNotice" class="notice warn" hidden></div>
+    <ul class="log" id="visitLog"></ul>
+    <p class="small" id="logEmpty">Photos and voice notes will appear here as you take them.</p>
+  </main>
+  <div class="big-actions stack" style="padding-left:20px;padding-right:20px">
+    <div class="row">
+      <button id="btnPhoto">📷 Take photo</button>
+      <button id="btnAudio">🎙 Record note</button>
+    </div>
+    <button class="secondary" id="btnFinish">Finish visit</button>
+  </div>
+  <input type="file" id="fileCam" accept="image/*" capture="environment" hidden>
+</section>
+
+<!-- ============ SUMMARY / EXPORT ============ -->
+<section id="scrSummary" class="screen">
+  <header><h1 id="sumTitle">Visit summary</h1></header>
+  <main class="stack">
+    <dl class="summary" id="sumList"></dl>
+    <div class="notice">If you used GPSLogger, stop it now and export its GPX file too. Put that file in the same folder as this zip on your computer — the report tool will merge them.</div>
+    <div class="progress" id="expProgress" hidden><i></i></div>
+    <p class="small" id="expStatus"></p>
+    <button id="btnExportSave">Export package (save to Downloads)</button>
+    <button class="secondary" id="btnExportShare">Export and share (Drive, email…)</button>
+    <button class="secondary" id="btnReopen">Reopen this visit</button>
+    <button class="danger" id="btnDelete">Delete this visit from phone</button>
+    <button class="quiet" data-go="scrHome">Back to visit list</button>
+  </main>
+</section>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+/* =====================================================================
+   Easement Monitor — field capture app
+   Everything is saved to the phone's browser database (IndexedDB) the
+   moment it is captured, so closing the app or losing power loses at
+   most the last few seconds of track.
+   ===================================================================== */
+
+const APP_VERSION = '1.0.0';
+const $ = id => document.getElementById(id);
+
+/* ---------- tiny helpers ---------- */
+function toast(msg, ms=2500){ const t=$('toast'); t.textContent=msg; t.classList.add('show'); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove('show'),ms); }
+function pad(n,w=2){ return String(n).padStart(w,'0'); }
+function pad3(n){ return pad(n,3); }
+function isoLocal(ts){ // ISO with local offset, e.g. 2026-09-23T10:15:30-04:00
+  const d=new Date(ts), o=-d.getTimezoneOffset(), s=o>=0?'+':'-', a=Math.abs(o);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}${s}${pad(Math.floor(a/60))}:${pad(a%60)}`;
+}
+function fmtTime(ts){ const d=new Date(ts); return `${pad(d.getHours())}:${pad(d.getMinutes())}`; }
+function fmtDur(ms){ const s=Math.floor(ms/1000); const h=Math.floor(s/3600), m=Math.floor(s%3600/60); return h?`${h}:${pad(m)}:${pad(s%60)}`:`${m}:${pad(s%60)}`; }
+function haversineM(a,b){ const R=6371000,r=Math.PI/180; const dLat=(b.lat-a.lat)*r, dLon=(b.lon-a.lon)*r;
+  const h=Math.sin(dLat/2)**2+Math.cos(a.lat*r)*Math.cos(b.lat*r)*Math.sin(dLon/2)**2; return 2*R*Math.asin(Math.sqrt(h)); }
+function safeName(s){ return (s||'visit').replace(/[^A-Za-z0-9]+/g,'_').replace(/^_+|_+$/g,'').slice(0,40)||'visit'; }
+function todayStr(){ const d=new Date(); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; }
+function show(id){ document.querySelectorAll('.screen').forEach(s=>s.classList.toggle('active',s.id===id)); window.scrollTo(0,0); }
+document.querySelectorAll('[data-go]').forEach(b=>b.addEventListener('click',()=>{ if(b.dataset.go==='scrHome') renderHome(); show(b.dataset.go); }));
+
+/* ---------- IndexedDB ---------- */
+const DB_NAME='easementMonitor', DB_VER=1;
+let db;
+function openDB(){
+  return new Promise((res,rej)=>{
+    const rq=indexedDB.open(DB_NAME,DB_VER);
+    rq.onupgradeneeded=e=>{
+      const d=e.target.result;
+      d.createObjectStore('visits',{keyPath:'id'});
+      d.createObjectStore('points',{keyPath:'id',autoIncrement:true}).createIndex('visit','visitId');
+      d.createObjectStore('photos',{keyPath:'id',autoIncrement:true}).createIndex('visit','visitId');
+      d.createObjectStore('audio',{keyPath:'id',autoIncrement:true}).createIndex('visit','visitId');
+    };
+    rq.onsuccess=()=>{ db=rq.result; res(db); };
+    rq.onerror=()=>rej(rq.error);
+  });
+}
+function tx(store,mode,fn){
+  return new Promise((res,rej)=>{
+    const t=db.transaction(store,mode), s=t.objectStore(store); let out;
+    const r=fn(s); if(r&&r.onsuccess!==undefined){ r.onsuccess=()=>out=r.result; }
+    t.oncomplete=()=>res(out); t.onerror=()=>rej(t.error); t.onabort=()=>rej(t.error);
+  });
+}
+const dbPut=(s,v)=>tx(s,'readwrite',o=>o.put(v));
+const dbAdd=(s,v)=>tx(s,'readwrite',o=>o.add(v));
+const dbGet=(s,k)=>tx(s,'readonly',o=>o.get(k));
+const dbAll=s=>tx(s,'readonly',o=>o.getAll());
+const dbByVisit=(s,vid)=>tx(s,'readonly',o=>o.index('visit').getAll(vid));
+async function dbDeleteVisit(vid){
+  for(const s of ['points','photos','audio']){
+    const rows=await dbByVisit(s,vid);
+    await tx(s,'readwrite',o=>{ rows.forEach(r=>o.delete(r.id)); });
+  }
+  await tx('visits','readwrite',o=>o.delete(vid));
+}
+
+/* ---------- app state ---------- */
+let visit=null;          // active visit record
+let points=[];           // cached track points for the active visit
+let photoCount=0, audioCount=0;
+let lastPos=null, lastHeading=null;
+let watchId=null, wakeLock=null, timerH=null;
+let recorder=null, recChunks=[], recStart=null, recPos=null, recSeq=0, micStream=null;
+
+/* ---------- home ---------- */
+async function renderHome(){
+  const visits=(await dbAll('visits')).sort((a,b)=>b.startedAt-a.startedAt);
+  const list=$('visitList'); list.innerHTML='';
+  if(!visits.length){ list.innerHTML='<p class="small">No visits yet.</p>'; return; }
+  for(const v of visits){
+    const b=document.createElement('button'); b.className='visit'+(v.status==='active'?' open':'');
+    b.innerHTML=`${v.easement||'(unnamed easement)'}<span class="meta">${v.date} · ${v.status==='active'?'<b>In progress — tap to resume</b>':`${v.photoCount||0} photos, ${v.audioCount||0} notes · ${v.status==='exported'?'exported':'not exported yet'}`}</span>`;
+    b.onclick=()=> v.status==='active'? resumeVisit(v.id) : openSummary(v.id);
+    list.appendChild(b);
+  }
+}
+$('btnNew').onclick=()=>{ $('fDate').value=todayStr(); show('scrNew'); $('fEasement').focus(); };
+
+/* ---------- start / resume ---------- */
+$('btnStartVisit').onclick=async()=>{
+  const easement=$('fEasement').value.trim();
+  if(!easement){ toast('Enter the easement name first.'); $('fEasement').focus(); return; }
+  const now=Date.now();
+  visit={ id:`${$('fDate').value||todayStr()}_${safeName(easement)}_${now.toString(36)}`, easement,
+    landowner:$('fLandowner').value.trim(), date:$('fDate').value||todayStr(), monitors:$('fMonitors').value.trim(),
+    weather:$('fWeather').value.trim(), notes:$('fNotes').value.trim(), startedAt:now, endedAt:null, status:'active',
+    photoCount:0, audioCount:0, appVersion:APP_VERSION };
+  await dbPut('visits',visit);
+  ['fEasement','fLandowner','fMonitors','fWeather','fNotes'].forEach(i=>$(i).value='');
+  await beginCapture();
+};
+async function resumeVisit(id){ visit=await dbGet('visits',id); await beginCapture(); }
+
+async function beginCapture(){
+  points=await dbByVisit('points',visit.id); points.sort((a,b)=>a.t-b.t);
+  photoCount=visit.photoCount||0; audioCount=visit.audioCount||0; recSeq=audioCount;
+  $('vTitle').textContent=visit.easement; $('vSub').textContent=`${visit.date} · ${visit.landowner||''}`;
+  await renderLog();
+  show('scrVisit');
+  startGPS(); startCompass(); await keepAwake();
+  clearInterval(timerH); timerH=setInterval(updateStatus,1000); updateStatus();
+}
+
+/* ---------- GPS ---------- */
+function startGPS(){
+  if(watchId!==null) navigator.geolocation.clearWatch(watchId);
+  if(!('geolocation' in navigator)){ permNotice('This browser has no location support.'); return; }
+  watchId=navigator.geolocation.watchPosition(onPos,err=>{
+    permNotice(err.code===1?'Location permission is blocked. Tap the lock icon in the address bar and allow Location, then reload.':'GPS error: '+err.message);
+  },{enableHighAccuracy:true,maximumAge:0,timeout:30000});
+}
+async function onPos(p){
+  $('permNotice').hidden=true;
+  const c=p.coords;
+  lastPos={lat:c.latitude,lon:c.longitude,acc:c.accuracy,alt:c.altitude,t:p.timestamp||Date.now()};
+  if(!visit||visit.status!=='active') return;
+  const prev=points[points.length-1];
+  // keep every fix that moved >= 2 m or is >= 10 s old; skip very poor fixes
+  if(c.accuracy>75) { updateStatus(); return; }
+  if(prev && haversineM(prev,lastPos)<2 && lastPos.t-prev.t<10000){ updateStatus(); return; }
+  const pt={visitId:visit.id,t:lastPos.t,lat:lastPos.lat,lon:lastPos.lon,acc:Math.round(c.accuracy),alt:c.altitude==null?null:Math.round(c.altitude)};
+  points.push(pt); await dbAdd('points',pt); updateStatus();
+}
+function permNotice(msg){ const n=$('permNotice'); n.textContent=msg; n.hidden=false; }
+function trackDistanceM(pts){ let d=0; for(let i=1;i<pts.length;i++) d+=haversineM(pts[i-1],pts[i]); return d; }
+function updateStatus(){
+  if(!visit) return;
+  $('stTime').textContent=fmtDur(Date.now()-visit.startedAt);
+  $('stDist').textContent=(trackDistanceM(points)/1609.344).toFixed(2);
+  $('stPts').textContent=points.length;
+  $('stGps').textContent=lastPos? `GPS ±${Math.round(lastPos.acc)} m · ${lastPos.lat.toFixed(5)}, ${lastPos.lon.toFixed(5)}` : 'Waiting for GPS…';
+  $('stHead').textContent=lastHeading==null?'no compass':`${Math.round(lastHeading)}° ${compassName(lastHeading)}`;
+}
+function compassName(d){ return ['N','NE','E','SE','S','SW','W','NW'][Math.round(d/45)%8]; }
+
+/* ---------- compass ---------- */
+function startCompass(){
+  const handler=e=>{
+    let h=null;
+    if(typeof e.webkitCompassHeading==='number') h=e.webkitCompassHeading;          // iOS
+    else if(e.absolute!==false && typeof e.alpha==='number') h=(360-e.alpha)%360;     // Android absolute
+    if(h!=null) lastHeading=h;
+  };
+  if('ondeviceorientationabsolute' in window) window.addEventListener('deviceorientationabsolute',handler);
+  else window.addEventListener('deviceorientation',handler);
+}
+
+/* ---------- keep screen on ---------- */
+async function keepAwake(){
+  try{ if('wakeLock' in navigator){ wakeLock=await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>wakeLock=null); } }catch(e){ /* not critical */ }
+}
+document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible' && visit && visit.status==='active'){ keepAwake(); startGPS(); } });
+
+/* ---------- photos ---------- */
+$('btnPhoto').onclick=()=>{ $('fileCam').value=''; $('fileCam').click(); };
+$('fileCam').addEventListener('change',async()=>{
+  const f=$('fileCam').files[0]; if(!f) return;
+  const t=Date.now(); const pos=lastPos; const headingBefore=lastHeading;
+  await new Promise(r=>setTimeout(r,600)); // let compass settle after returning from the camera
+  const heading=lastHeading??headingBefore;
+  photoCount++; const seq=photoCount;
+  let blob=f;
+  try{ blob=await writeExif(f,pos,heading,t); }catch(e){ console.warn('EXIF skipped',e); }
+  const rec={visitId:visit.id,seq,t,lat:pos?pos.lat:null,lon:pos?pos.lon:null,acc:pos?Math.round(pos.acc):null,
+    heading:heading==null?null:Math.round(heading),caption:'',blob,mime:blob.type||'image/jpeg'};
+  await dbAdd('photos',rec);
+  visit.photoCount=photoCount; await dbPut('visits',visit);
+  await renderLog(); toast(`Photo ${pad3(seq)} saved${pos?'':' (no GPS fix yet)'}`);
+});
+// Writes GPS + heading + timestamp into the JPEG's EXIF using piexifjs when available.
+async function writeExif(file,pos,heading,t){
+  if(!window.piexif || !/jpe?g$/i.test(file.type||'') && !/\.jpe?g$/i.test(file.name||'')) return file;
+  if(!pos) return file;
+  const dataURL=await new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=rej; r.readAsDataURL(file); });
+  let exif; try{ exif=piexif.load(dataURL); }catch(e){ return file; }
+  const d=new Date(t);
+  const dms=v=>{ v=Math.abs(v); const deg=Math.floor(v), mf=(v-deg)*60, min=Math.floor(mf), sec=Math.round((mf-min)*60*100); return [[deg,1],[min,1],[sec,100]]; };
+  exif.GPS=exif.GPS||{};
+  const G=piexif.GPSIFD;
+  exif.GPS[G.GPSVersionID]=[2,3,0,0];
+  exif.GPS[G.GPSLatitudeRef]=pos.lat>=0?'N':'S'; exif.GPS[G.GPSLatitude]=dms(pos.lat);
+  exif.GPS[G.GPSLongitudeRef]=pos.lon>=0?'E':'W'; exif.GPS[G.GPSLongitude]=dms(pos.lon);
+  if(heading!=null){ exif.GPS[G.GPSImgDirectionRef]='T'; exif.GPS[G.GPSImgDirection]=[Math.round(heading*100),100]; }
+  exif.GPS[G.GPSDateStamp]=`${d.getUTCFullYear()}:${pad(d.getUTCMonth()+1)}:${pad(d.getUTCDate())}`;
+  exif.GPS[G.GPSTimeStamp]=[[d.getUTCHours(),1],[d.getUTCMinutes(),1],[d.getUTCSeconds(),1]];
+  exif.Exif=exif.Exif||{};
+  exif.Exif[piexif.ExifIFD.DateTimeOriginal]=exif.Exif[piexif.ExifIFD.DateTimeOriginal]||`${d.getFullYear()}:${pad(d.getMonth()+1)}:${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const out=piexif.insert(piexif.dump(exif),dataURL);
+  const bin=atob(out.split(',')[1]); const u8=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) u8[i]=bin.charCodeAt(i);
+  return new Blob([u8],{type:'image/jpeg'});
+}
+
+/* ---------- voice notes ---------- */
+$('btnAudio').onclick=async()=>{ if(recorder && recorder.state==='recording') stopRec(); else await startRec(); };
+async function startRec(){
+  try{ micStream=await navigator.mediaDevices.getUserMedia({audio:true}); }
+  catch(e){ permNotice('Microphone permission is blocked. Tap the lock icon in the address bar and allow Microphone.'); return; }
+  const mime=['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg'].find(m=>MediaRecorder.isTypeSupported(m))||'';
+  recorder=new MediaRecorder(micStream, mime?{mimeType:mime}:{});
+  recChunks=[]; recStart=Date.now(); recPos=lastPos;
+  recorder.ondataavailable=e=>{ if(e.data.size) recChunks.push(e.data); };
+  recorder.onstop=saveRec;
+  recorder.start(5000); // hand over a chunk every 5 s so a crash loses little
+  $('btnAudio').classList.add('on'); $('btnAudio').textContent='⏹ Stop note'; $('statusBar').classList.add('rec');
+}
+function stopRec(){ if(recorder && recorder.state!=='inactive') recorder.stop(); }
+async function saveRec(){
+  $('btnAudio').classList.remove('on'); $('btnAudio').textContent='🎙 Record note'; $('statusBar').classList.remove('rec');
+  micStream && micStream.getTracks().forEach(t=>t.stop());
+  const type=recorder.mimeType||recChunks[0]?.type||'audio/webm';
+  const blob=new Blob(recChunks,{type}); if(!blob.size){ toast('Nothing recorded.'); return; }
+  audioCount++; const seq=audioCount; const end=Date.now();
+  const ext=type.includes('mp4')?'m4a':type.includes('ogg')?'ogg':'webm';
+  await dbAdd('audio',{visitId:visit.id,seq,tStart:recStart,tEnd:end,lat:recPos?recPos.lat:null,lon:recPos?recPos.lon:null,
+    latEnd:lastPos?lastPos.lat:null,lonEnd:lastPos?lastPos.lon:null,photosBefore:photoCount,blob,mime:type,ext});
+  visit.audioCount=audioCount; await dbPut('visits',visit);
+  await renderLog(); toast(`Voice note ${pad3(seq)} saved (${fmtDur(end-recStart)})`);
+}
+window.addEventListener('pagehide',()=>{ if(recorder && recorder.state==='recording') stopRec(); });
+
+/* ---------- log list ---------- */
+async function renderLog(){
+  const [ph,au]=await Promise.all([dbByVisit('photos',visit.id),dbByVisit('audio',visit.id)]);
+  const items=[...ph.map(p=>({k:'p',t:p.t,r:p})),...au.map(a=>({k:'a',t:a.tStart,r:a}))].sort((a,b)=>b.t-a.t);
+  const ul=$('visitLog'); ul.innerHTML=''; $('logEmpty').hidden=items.length>0;
+  for(const it of items){
+    const li=document.createElement('li');
+    if(it.k==='p'){
+      const url=URL.createObjectURL(it.r.blob);
+      li.innerHTML=`<span class="tag">📷 ${pad3(it.r.seq)}</span><img src="${url}" alt="Photo ${it.r.seq}"><div class="body"><span class="small">${fmtTime(it.t)} · ${it.r.lat!=null?`${it.r.lat.toFixed(5)}, ${it.r.lon.toFixed(5)} ±${it.r.acc} m`:'no GPS'}${it.r.heading!=null?` · facing ${it.r.heading}° ${compassName(it.r.heading)}`:''}</span><input type="text" placeholder="Optional typed caption" value="${(it.r.caption||'').replace(/"/g,'&quot;')}"></div>`;
+      const inp=li.querySelector('input'); inp.onchange=async()=>{ it.r.caption=inp.value; await dbPut('photos',it.r); };
+    }else{
+      li.innerHTML=`<span class="tag a">🎙 ${pad3(it.r.seq)}</span><div class="body">Voice note, ${fmtDur(it.r.tEnd-it.r.tStart)}<span class="small">${fmtTime(it.t)} · ${it.r.lat!=null?`${it.r.lat.toFixed(5)}, ${it.r.lon.toFixed(5)}`:'no GPS'}</span></div>`;
+    }
+    ul.appendChild(li);
+  }
+}
+
+/* ---------- finish ---------- */
+$('btnFinish').onclick=async()=>{
+  if(recorder && recorder.state==='recording'){ toast('Stop the voice note first.'); return; }
+  if(!confirm('Finish this visit and stop tracking?')) return;
+  await endCapture(); visit.endedAt=Date.now(); visit.status='done'; await dbPut('visits',visit);
+  openSummary(visit.id);
+};
+async function endCapture(){
+  if(watchId!==null){ navigator.geolocation.clearWatch(watchId); watchId=null; }
+  clearInterval(timerH); timerH=null;
+  try{ wakeLock && await wakeLock.release(); }catch(e){} wakeLock=null;
+}
+
+/* ---------- summary / export ---------- */
+async function openSummary(id){
+  visit=await dbGet('visits',id); points=await dbByVisit('points',id); points.sort((a,b)=>a.t-b.t);
+  const dist=trackDistanceM(points);
+  $('sumTitle').textContent=visit.easement;
+  $('sumList').innerHTML=[['Landowner',visit.landowner||'—'],['Date',visit.date],['Monitor(s)',visit.monitors||'—'],['Weather',visit.weather||'—'],
+    ['Duration',fmtDur((visit.endedAt||Date.now())-visit.startedAt)],['Distance walked',`${(dist/1609.344).toFixed(2)} mi (${Math.round(dist)} m)`],
+    ['Track points',points.length],['Photos',visit.photoCount||0],['Voice notes',visit.audioCount||0]].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join('');
+  $('expStatus').textContent=visit.status==='exported'?'Already exported once. You can export again.':'';
+  $('expProgress').hidden=true;
+  show('scrSummary');
+}
+$('btnReopen').onclick=async()=>{ visit.status='active'; visit.endedAt=null; await dbPut('visits',visit); await beginCapture(); };
+$('btnDelete').onclick=async()=>{
+  const warn=visit.status==='exported'?'Delete this visit from the phone? Make sure the zip is safely on your computer.':'This visit has NOT been exported. Delete it anyway?';
+  if(!confirm(warn)) return; if(visit.status!=='exported' && !confirm('Really delete without exporting?')) return;
+  await dbDeleteVisit(visit.id); visit=null; await renderHome(); show('scrHome'); toast('Visit deleted');
+};
+$('btnExportSave').onclick=()=>exportVisit(false);
+$('btnExportShare').onclick=()=>exportVisit(true);
+
+function buildGPX(v,pts){
+  const e=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+  let g=`<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Easement Monitor ${APP_VERSION}" xmlns="http://www.topografix.com/GPX/1/1">\n<metadata><name>${e(v.easement)} ${v.date}</name><time>${new Date(v.startedAt).toISOString()}</time></metadata>\n<trk><name>${e(v.easement)} monitoring walk</name><trkseg>\n`;
+  for(const p of pts) g+=`<trkpt lat="${p.lat}" lon="${p.lon}">${p.alt!=null?`<ele>${p.alt}</ele>`:''}<time>${new Date(p.t).toISOString()}</time></trkpt>\n`;
+  return g+`</trkseg></trk>\n</gpx>\n`;
+}
+function buildGeoJSON(v,pts,photos,audio){
+  const f=[];
+  if(pts.length) f.push({type:'Feature',properties:{kind:'track',easement:v.easement,date:v.date},geometry:{type:'LineString',coordinates:pts.map(p=>[p.lon,p.lat])}});
+  for(const p of photos) if(p.lat!=null) f.push({type:'Feature',properties:{kind:'photo',seq:p.seq,file:`photos/${pad3(p.seq)}.jpg`,time:isoLocal(p.t),heading:p.heading,accuracy_m:p.acc},geometry:{type:'Point',coordinates:[p.lon,p.lat]}});
+  for(const a of audio) if(a.lat!=null) f.push({type:'Feature',properties:{kind:'audio',seq:a.seq,file:`audio/note_${pad3(a.seq)}.${a.ext}`,time:isoLocal(a.tStart)},geometry:{type:'Point',coordinates:[a.lon,a.lat]}});
+  return JSON.stringify({type:'FeatureCollection',features:f},null,1);
+}
+
+async function exportVisit(share){
+  const btns=[$('btnExportSave'),$('btnExportShare')]; btns.forEach(b=>b.disabled=true);
+  const prog=$('expProgress'); prog.hidden=false; const bar=prog.firstElementChild; const st=$('expStatus');
+  try{
+    const [photos,audio]=await Promise.all([dbByVisit('photos',visit.id),dbByVisit('audio',visit.id)]);
+    photos.sort((a,b)=>a.seq-b.seq); audio.sort((a,b)=>a.seq-b.seq);
+    const dist=trackDistanceM(points);
+    const meta={ format:'easement-monitor-visit', formatVersion:1, appVersion:APP_VERSION, exportedAt:isoLocal(Date.now()),
+      visit:{ id:visit.id, easement:visit.easement, landowner:visit.landowner, date:visit.date, monitors:visit.monitors.split(',').map(s=>s.trim()).filter(Boolean),
+        weather:visit.weather, notes:visit.notes, startedAt:isoLocal(visit.startedAt), endedAt:visit.endedAt?isoLocal(visit.endedAt):null,
+        durationMinutes:Math.round(((visit.endedAt||Date.now())-visit.startedAt)/60000), distanceMeters:Math.round(dist), distanceMiles:+(dist/1609.344).toFixed(2), trackPoints:points.length },
+      photos:photos.map(p=>({seq:p.seq,file:`photos/${pad3(p.seq)}.jpg`,time:isoLocal(p.t),timestampMs:p.t,lat:p.lat,lon:p.lon,accuracyMeters:p.acc,headingDegrees:p.heading,typedCaption:p.caption||''})),
+      audio:audio.map(a=>({seq:a.seq,file:`audio/note_${pad3(a.seq)}.${a.ext}`,start:isoLocal(a.tStart),end:isoLocal(a.tEnd),startMs:a.tStart,endMs:a.tEnd,durationSeconds:Math.round((a.tEnd-a.tStart)/1000),lat:a.lat,lon:a.lon,latEnd:a.latEnd,lonEnd:a.lonEnd,photosTakenBefore:a.photosBefore,mime:a.mime})),
+      files:{ track:'track.gpx', trackGeoJSON:'track.geojson', externalTrackHint:'Add any GPSLogger .gpx file alongside this zip; the report tool will merge it.' } };
+    const files=[
+      {name:'visit.json',data:new Blob([JSON.stringify(meta,null,2)],{type:'application/json'})},
+      {name:'track.gpx',data:new Blob([buildGPX(visit,points)],{type:'application/gpx+xml'})},
+      {name:'track.geojson',data:new Blob([buildGeoJSON(visit,points,photos,audio)],{type:'application/geo+json'})},
+      {name:'README.txt',data:new Blob([`Easement monitoring visit package\n${visit.easement} — ${visit.date}\n\nvisit.json   metadata, photo and voice-note index\ntrack.gpx    walked route (backup track from the app)\ntrack.geojson route + photo/note locations\nphotos/      numbered photos (GPS in EXIF where available)\naudio/       voice notes, to be transcribed by the report tool\n`],{type:'text/plain'})},
+      ...photos.map(p=>({name:`photos/${pad3(p.seq)}.jpg`,data:p.blob})),
+      ...audio.map(a=>({name:`audio/note_${pad3(a.seq)}.${a.ext}`,data:a.blob}))];
+    const zip=await makeZip(files,(i,n)=>{ bar.style.width=`${Math.round(i/n*100)}%`; st.textContent=`Packing ${i} of ${n} files…`; });
+    const fname=`visit_${visit.date}_${safeName(visit.easement)}.zip`;
+    const file=new File([zip],fname,{type:'application/zip'});
+    if(share && navigator.canShare && navigator.canShare({files:[file]})){
+      await navigator.share({files:[file],title:fname});
+    }else{
+      if(share) toast('Sharing not available here — saving to Downloads instead.');
+      const a=document.createElement('a'); a.href=URL.createObjectURL(file); a.download=fname; document.body.appendChild(a); a.click();
+      setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); },60000);
+    }
+    visit.status='exported'; await dbPut('visits',visit);
+    st.textContent=`Exported ${fname} (${(zip.size/1048576).toFixed(1)} MB). Check your Downloads folder, then move it to your computer.`;
+    bar.style.width='100%';
+  }catch(e){
+    if(e && e.name==='AbortError') st.textContent='Share cancelled.'; else { console.error(e); st.textContent='Export failed: '+e.message+'. Nothing was deleted — try again.'; }
+  }finally{ btns.forEach(b=>b.disabled=false); }
+}
+
+/* ---------- minimal ZIP writer (STORE, no compression) ----------
+   Photos and audio are already compressed, so storing them is the
+   right choice and needs no external library. */
+const CRC_TABLE=(()=>{ const t=new Uint32Array(256); for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=c&1?0xEDB88320^(c>>>1):c>>>1; t[n]=c>>>0; } return t; })();
+function crc32(u8,crc=0){ crc=~crc>>>0; for(let i=0;i<u8.length;i++) crc=CRC_TABLE[(crc^u8[i])&0xFF]^(crc>>>8); return (~crc)>>>0; }
+function dosDateTime(d){ return { time:(d.getHours()<<11)|(d.getMinutes()<<5)|(d.getSeconds()>>1), date:((d.getFullYear()-1980)<<9)|((d.getMonth()+1)<<5)|d.getDate() }; }
+async function makeZip(files,onProgress){
+  const enc=new TextEncoder(), parts=[], central=[]; let offset=0; const now=dosDateTime(new Date());
+  const u32=(v,dv,o)=>dv.setUint32(o,v>>>0,true), u16=(v,dv,o)=>dv.setUint16(o,v&0xFFFF,true);
+  for(let i=0;i<files.length;i++){
+    const f=files[i]; const name=enc.encode(f.name);
+    const buf=new Uint8Array(await f.data.arrayBuffer()); const crc=crc32(buf); const size=buf.length;
+    const lh=new DataView(new ArrayBuffer(30));
+    u32(0x04034b50,lh,0); u16(20,lh,4); u16(0x0800,lh,6); u16(0,lh,8); u16(now.time,lh,10); u16(now.date,lh,12);
+    u32(crc,lh,14); u32(size,lh,18); u32(size,lh,22); u16(name.length,lh,26); u16(0,lh,28);
+    parts.push(lh.buffer,name,buf);
+    const ch=new DataView(new ArrayBuffer(46));
+    u32(0x02014b50,ch,0); u16(20,ch,4); u16(20,ch,6); u16(0x0800,ch,8); u16(0,ch,10); u16(now.time,ch,12); u16(now.date,ch,14);
+    u32(crc,ch,16); u32(size,ch,20); u32(size,ch,24); u16(name.length,ch,28); u16(0,ch,30); u16(0,ch,32); u16(0,ch,34); u16(0,ch,36); u32(0,ch,38); u32(offset,ch,42);
+    central.push(ch.buffer,name);
+    offset+=30+name.length+size;
+    onProgress && onProgress(i+1,files.length);
+    await new Promise(r=>setTimeout(r,0)); // keep the UI responsive
+  }
+  const cdSize=central.reduce((s,p)=>s+(p.byteLength??p.length),0);
+  const end=new DataView(new ArrayBuffer(22));
+  u32(0x06054b50,end,0); u16(0,end,4); u16(0,end,6); u16(files.length,end,8); u16(files.length,end,10); u32(cdSize,end,12); u32(offset,end,16); u16(0,end,20);
+  return new Blob([...parts,...central,end.buffer],{type:'application/zip'});
+}
+
+/* ---------- startup ---------- */
+(async function init(){
+  try{ await openDB(); }catch(e){ alert('This phone\'s browser cannot store data (private/incognito mode?). Use normal Chrome.'); return; }
+  if(navigator.storage && navigator.storage.persist){
+    const ok=await navigator.storage.persist();
+    if(!ok){ const n=$('storageNotice'); n.textContent='Tip: add this app to your home screen so Android treats its storage as permanent.'; n.hidden=false; }
+  }
+  if('serviceWorker' in navigator){ navigator.serviceWorker.register('sw.js').catch(()=>{}); }
+  await renderHome();
+  // Resume automatically if a visit was in progress when the app closed
+  const active=(await dbAll('visits')).find(v=>v.status==='active');
+  if(active){ toast('Resuming visit in progress'); await resumeVisit(active.id); }
+})();
+</script>
+</body>
+</html>
